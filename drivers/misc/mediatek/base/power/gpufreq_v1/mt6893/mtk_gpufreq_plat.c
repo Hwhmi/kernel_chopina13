@@ -3091,7 +3091,7 @@ static void __mt_gpufreq_init_table(void)
 
 	/* determine max_opp/min_opp... by segment */
 	if (segment_id == MT6891_SEGMENT)
-		g_segment_max_opp_idx = 8; //836MHz
+		g_segment_max_opp_idx = 5; //854MHz
 	else if (segment_id == MT6893_SEGMENT)
 		g_segment_max_opp_idx = 0; // 886MHz
 
