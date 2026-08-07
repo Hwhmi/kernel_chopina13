@@ -54,6 +54,15 @@ config ANDROID_BINDER_IPC_SELFTEST
 	  exhaustively with combinations of various buffer sizes and
 	  alignments.
 
+config ANDROID_VENDOR_HOOKS
+	bool "Android Vendor Hooks"
+	depends on ANDROID
+	default n
+	---help---
+	  Enable vendor hook tracepoints that allow vendor modules
+	  (such as Millet framework) to register callbacks for binder
+	  transactions, signal delivery, etc.
+
 endif # if ANDROID
 
 endmenu

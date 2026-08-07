@@ -81,6 +81,9 @@
 #ifdef CONFIG_MTK_TASK_TURBO
 #include <mt-plat/turbo_common.h>
 #endif
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
+#include <trace/hooks/binder.h>
+#endif
 
 #ifdef BINDER_WATCHDOG
 static DEFINE_MUTEX(mtk_binder_main_lock);
@@ -4316,6 +4319,9 @@ static void binder_transaction(struct binder_proc *proc,
 #endif
 		binder_restore_priority(current, in_reply_to->saved_priority);
 		binder_free_transaction(in_reply_to);
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
+		trace_android_vh_binder_reply(target_proc, proc, thread, tr);
+#endif
 	} else if (!(t->flags & TF_ONE_WAY)) {
 		BUG_ON(t->buffer->async_transaction != 0);
 		binder_inner_proc_lock(proc);
@@ -4344,6 +4350,10 @@ static void binder_transaction(struct binder_proc *proc,
 		if (!binder_proc_transaction(t, target_proc, NULL))
 			goto err_dead_proc_or_thread;
 	}
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
+	if (!reply)
+		trace_android_vh_binder_trans(target_proc, proc, thread, tr);
+#endif
 	if (target_thread)
 		binder_thread_dec_tmpref(target_thread);
 	binder_proc_dec_tmpref(target_proc);
@@ -5020,6 +5030,9 @@ retry:
 	trace_binder_wait_for_work(wait_for_proc_work,
 				   !!thread->transaction_stack,
 				   !binder_worklist_empty(proc, &thread->todo));
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
+	trace_android_vh_binder_wait_for_work(wait_for_proc_work, thread, proc);
+#endif
 	if (wait_for_proc_work) {
 		if (!(thread->looper & (BINDER_LOOPER_STATE_REGISTERED |
 					BINDER_LOOPER_STATE_ENTERED))) {
@@ -7150,6 +7163,10 @@ static int __init binder_init(void)
 	ret = init_binderfs();
 	if (ret)
 		goto err_init_binder_device_failed;
+
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
+	trace_android_vh_binder_preset(&binder_procs, &binder_procs_lock);
+#endif
 
 #ifdef BINDER_WATCHDOG
 	init_binder_wtdog();

@@ -37,6 +37,9 @@
 #endif
 #include "binder_alloc.h"
 #include "binder_trace.h"
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
+#include <trace/hooks/binder.h>
+#endif
 
 struct list_lru binder_alloc_lru;
 
@@ -463,6 +466,10 @@ static struct binder_buffer *binder_alloc_new_buf_locked(
 
 	/* Pad 0-size buffers so they get assigned unique addresses */
 	size = max(size, sizeof(void *));
+
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
+	trace_android_vh_binder_alloc_new_buf_locked(size, alloc, is_async);
+#endif
 
 	if (is_async && alloc->free_async_space < size) {
 		binder_alloc_debug(BINDER_DEBUG_BUFFER_ALLOC,

@@ -58,6 +58,7 @@
 #include "mtk_disp_aal.h"
 #include "mtk_drm_mmp.h"
 #include "mtk_drm_trace.h"
+#include "oplus_display_compat.h"
 /* *******Panel Master******** */
 #include "mtk_fbconfig_kdebug.h"
 #ifdef CONFIG_MTK_HDMI_SUPPORT
@@ -3363,6 +3364,10 @@ static int mtk_drm_bind(struct device *dev)
 	if (ret < 0)
 		goto err_deinit;
 
+	ret = oplus_display_compat_init(drm);
+	if (ret < 0)
+		DDPPR_ERR("failed to init oplus display compat sysfs: %d\n", ret);
+
 	mtk_layering_rule_init(drm);
 	crtc = list_first_entry(&(drm)->mode_config.crtc_list, typeof(*crtc),
 				head);
@@ -3387,6 +3392,7 @@ static void mtk_drm_unbind(struct device *dev)
 {
 	struct mtk_drm_private *private = dev_get_drvdata(dev);
 
+	oplus_display_compat_deinit();
 	drm_dev_unregister(private->drm);
 	drm_dev_unref(private->drm);
 	private->drm = NULL;

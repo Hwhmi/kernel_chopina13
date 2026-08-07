@@ -43,6 +43,9 @@
 #include <linux/compiler.h>
 #include <linux/posix-timers.h>
 #include <linux/cgroup.h>
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
+#include <trace/hooks/signal.h>
+#endif
 #define CREATE_TRACE_POINTS
 #include <trace/events/signal.h>
 
@@ -1220,6 +1223,9 @@ int do_send_sig_info(int sig, struct siginfo *info, struct task_struct *p,
 	unsigned long flags;
 	int ret = -ESRCH;
 
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
+	trace_android_vh_do_send_sig_info(sig, current, p);
+#endif
 	if (lock_task_sighand(p, &flags)) {
 		ret = send_signal(sig, info, p, group);
 		unlock_task_sighand(p, &flags);

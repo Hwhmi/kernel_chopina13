@@ -49,6 +49,7 @@
 #include "mtk_drm_arr.h"
 #include "mi_disp/mi_dsi_panel.h"
 #include "mi_disp/mi_dsi_display.h"
+#include "oplus_display_compat.h"
 #include "mi_disp/mi_disp_feature.h"
 #include "mi_disp/mi_disp_feature_id.h"
 #include "mi_disp/mi_dsi_panel_count.h"
@@ -6486,16 +6487,19 @@ static int mtk_dsi_io_cmd(struct mtk_ddp_comp *comp, struct cmdq_pkt *handle,
 
 		panel_ext = mtk_dsi_get_panel_ext(comp);
 		if (panel_ext && panel_ext->funcs
-			&& panel_ext->funcs->set_backlight_cmdq)
+			&& panel_ext->funcs->set_backlight_cmdq) {
+			oplus_display_brightness = *(int *)params;
 			panel_ext->funcs->set_backlight_cmdq(dsi,
 					mipi_dsi_dcs_write_gce,
 					handle, *(int *)params);
+		}
 	}
 		break;
 	case MI_DSI_SET_BL:
 	{
 		struct mtk_dsi *dsi =
 			container_of(comp, struct mtk_dsi, ddp_comp);
+		oplus_display_brightness = *(int *)params;
 		mi_dsi_display_set_brightness(dsi, *(int *)params);
 	}
 		break;
