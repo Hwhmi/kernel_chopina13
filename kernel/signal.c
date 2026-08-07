@@ -45,6 +45,8 @@
 #include <linux/cgroup.h>
 #ifdef CONFIG_ANDROID_VENDOR_HOOKS
 #include <trace/hooks/signal.h>
+#undef TRACE_INCLUDE_PATH
+#undef TRACE_INCLUDE_FILE
 #endif
 #define CREATE_TRACE_POINTS
 #include <trace/events/signal.h>
