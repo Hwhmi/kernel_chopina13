@@ -26,6 +26,7 @@
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/proc_fs.h>
+#include <linux/iopoll.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/of.h>
@@ -643,6 +644,7 @@ void mt_gpufreq_set_timestamp(void)
 void mt_gpufreq_check_bus_idle(void)
 {
 	u32 val;
+	int ret;
 
 	gpufreq_pr_debug("@%s\n", __func__);
 
@@ -654,9 +656,12 @@ void mt_gpufreq_check_bus_idle(void)
 
 	/* polling register MFG_DEBUG_TOP (0x13fb_f178) bit 2 = 0x1 */
 	/* => 1 for bus idle, 0 for bus non-idle */
-	do {
-		val = readl(g_mfg_base + 0x178);
-	} while ((val & 0x4) != 0x4);
+	ret = readl_poll_timeout_atomic(g_mfg_base + 0x178, val,
+					(val & 0x4) == 0x4,
+					0, 10000);
+	if (ret)
+		gpufreq_pr_info("%s: wait MFG bus idle timeout, MFG_DEBUG_TOP=0x%x\n",
+				__func__, val);
 }
 
 static void mt_gpufreq_external_cg_control(void)

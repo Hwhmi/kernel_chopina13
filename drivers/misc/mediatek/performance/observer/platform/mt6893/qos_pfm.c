@@ -12,6 +12,7 @@
  */
 #define pr_fmt(fmt) "pob_qos: " fmt
 #include <linux/notifier.h>
+#include <linux/atomic.h>
 #include <mt-plat/mtk_perfobserver.h>
 
 #include <linux/ktime.h>
@@ -27,6 +28,7 @@
 #include <linux/vmalloc.h>
 #include <linux/module.h>
 #include <linux/ktime.h>
+#include <linux/workqueue.h>
 
 #include "pob_int.h"
 #include "pob_qos.h"
@@ -95,10 +97,14 @@ struct qos_bound_stat *_gstats[QOS_BOUND_BUF_SIZE];
 
 static struct workqueue_struct *_gpPOBQoSNtfWQ;
 static struct hrtimer _pobqos_hrt;
+static atomic_t pobqos_timer_enabled = ATOMIC_INIT(0);
 
 static void pob_enable_timer(void)
 {
 	ktime_t ktime;
+
+	if (atomic_xchg(&pobqos_timer_enabled, 1))
+		return;
 
 	ktime = ktime_set(0, ADJUST_INTERVAL_MS * MS_TO_NS);
 	hrtimer_start(&_pobqos_hrt, ktime, HRTIMER_MODE_REL);
@@ -106,7 +112,13 @@ static void pob_enable_timer(void)
 
 static void pob_disable_timer(void)
 {
+	if (!atomic_xchg(&pobqos_timer_enabled, 0))
+		return;
+
 	hrtimer_cancel(&_pobqos_hrt);
+
+	if (_gpPOBQoSNtfWQ)
+		flush_workqueue(_gpPOBQoSNtfWQ);
 }
 
 static void pobqos_hrt_wq_cb(struct work_struct *psWork)
@@ -203,10 +215,13 @@ static enum hrtimer_restart pobqos_hrt_cb(struct hrtimer *timer)
 
 	ktime_t ktime;
 
+	if (!atomic_read(&pobqos_timer_enabled))
+		return HRTIMER_NORESTART;
+
 	ktime = ktime_set(0, ADJUST_INTERVAL_MS * MS_TO_NS);
 	hrtimer_add_expires(timer, ktime);
 
-	if (_gpPOBQoSNtfWQ)
+	if (_gpPOBQoSNtfWQ && atomic_read(&pobqos_timer_enabled))
 		vpPush =
 			(struct POBQOS_NTF_PUSH_TAG *)
 			pob_alloc_atomic(sizeof(struct POBQOS_NTF_PUSH_TAG));
@@ -216,7 +231,8 @@ static enum hrtimer_restart pobqos_hrt_cb(struct hrtimer *timer)
 		queue_work(_gpPOBQoSNtfWQ, &vpPush->sWork);
 	}
 
-	return HRTIMER_RESTART;
+	return atomic_read(&pobqos_timer_enabled) ?
+		HRTIMER_RESTART : HRTIMER_NORESTART;
 }
 
 static int pob_pfm_qos_cb(struct notifier_block *nb,
@@ -288,7 +304,12 @@ int __init pob_qos_pfm_init(void)
 
 void __exit pob_qos_pfm_exit(void)
 {
+	pob_disable_timer();
 	unregister_qos_notifier(&pob_pfm_qos_notifier);
+
+	if (_gpPOBQoSNtfWQ)
+		destroy_workqueue(_gpPOBQoSNtfWQ);
+	_gpPOBQoSNtfWQ = NULL;
 }
 
 int pob_qos_pfm_enable(void)
@@ -774,4 +795,3 @@ void __exit pob_qos_pfm_exit(void)
 void pob_qos_tracker(u64 wallclock)
 {
 }
-
