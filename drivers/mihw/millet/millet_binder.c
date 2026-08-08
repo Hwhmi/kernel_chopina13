@@ -41,7 +41,7 @@ mi_binder_reply_hook(struct task_struct *dst, struct task_struct *src,
 {
 	struct millet_data data;
 
-	if (unlikely(!dst))
+	if (unlikely(!dst || !src))
 		return;
 
 	get_task_struct(dst);
@@ -65,7 +65,7 @@ mi_binder_trans_hook(struct task_struct *dst, struct task_struct *src,
 {
 	struct millet_data data;
 
-	if (unlikely(!dst))
+	if (unlikely(!dst || !src))
 		return;
 
 	get_task_struct(dst);
@@ -90,7 +90,7 @@ mi_binder_wait4_hook(struct task_struct *dst, struct task_struct *src,
 {
 	struct millet_data data;
 
-	if (unlikely(!dst))
+	if (unlikely(!dst || !src))
 		return;
 
 	get_task_struct(dst);
@@ -115,7 +115,7 @@ mi_binder_overflow_hook(struct task_struct *dst, struct task_struct *src,
 {
 	struct millet_data data;
 
-	if (unlikely(!dst))
+	if (unlikely(!dst || !src))
 		return;
 
 	get_task_struct(dst);
@@ -170,9 +170,13 @@ static int binder_sendmsg(struct task_struct *tsk,
 	data->msg_type = MSG_TO_USER;
 	data->owner = BINDER_TYPE;
 	src_task = (struct task_struct *)data->mod.k_priv.binder.trans.src_task;
+	if (!src_task)
+		return RET_ERR;
 	data->mod.k_priv.binder.trans.caller_pid = task_pid_nr(src_task);
 	data->mod.k_priv.binder.trans.caller_uid = task_uid(src_task).val;
 	dst_task = (struct task_struct *)data->mod.k_priv.binder.trans.dst_task;
+	if (!dst_task)
+		return RET_ERR;
 	data->mod.k_priv.binder.trans.dst_pid = task_pid_nr(dst_task);
 	data->uid = task_uid(dst_task).val;
 

@@ -217,6 +217,7 @@ static enum BINDER_STAT query_binder_stat(struct binder_proc *proc)
 {
 	struct rb_node *n = NULL;
 	struct binder_thread *thread = NULL;
+	struct binder_transaction *t;
 	int pid, tid, uid = 0;
 	enum BINDER_STAT stat;
 	struct task_struct *tsk;
@@ -250,19 +251,21 @@ static enum BINDER_STAT query_binder_stat(struct binder_proc *proc)
 			goto busy;
 		}
 
-		if (!thread->transaction_stack)
+		t = READ_ONCE(thread->transaction_stack);
+		if (!t)
 			continue;
 
-		spin_lock(&thread->transaction_stack->lock);
-		if (thread->transaction_stack->to_thread == thread) {
+		spin_lock(&t->lock);
+		if (READ_ONCE(thread->transaction_stack) == t &&
+				t->to_thread == thread) {
 			tsk = thread->task;
 			pid = task_tgid_nr(tsk);
 			tid = thread->pid;
 			stat = BINDER_IN_TRANSACTION;
-			spin_unlock(&thread->transaction_stack->lock);
+			spin_unlock(&t->lock);
 			goto busy;
 		}
-		spin_unlock(&thread->transaction_stack->lock);
+		spin_unlock(&t->lock);
 	}
 
 	binder_inner_proc_unlock(proc);
@@ -355,28 +358,37 @@ void mi_binder_wait_for_work(void *data, bool do_proc_work,
 	struct binder_thread *thread, struct binder_proc *proc)
 {
 	struct task_struct *dst;
+	struct binder_transaction *t;
+	bool oneway;
+	int code;
 
-	if (!thread || !proc || !proc->tsk || !thread->transaction_stack)
+	if (!thread || !proc || !proc->tsk)
 		return;
 
-	spin_lock(&thread->transaction_stack->lock);
+	t = READ_ONCE(thread->transaction_stack);
+	if (!t)
+		return;
+
+	spin_lock(&t->lock);
 	if (oem_binder_hook_set.oem_wait4_hook
 			&& !thread->is_dead
-			&& thread->transaction_stack
-			&& thread->transaction_stack->to_proc
-			&& thread->transaction_stack->to_proc->tsk){
-		dst = thread->transaction_stack->to_proc->tsk;
+			&& READ_ONCE(thread->transaction_stack) == t
+			&& t->to_proc
+			&& t->to_proc->tsk) {
+		dst = t->to_proc->tsk;
+		oneway = t->flags & TF_ONE_WAY;
+		code = t->code;
 		get_task_struct(dst);
-		spin_unlock(&thread->transaction_stack->lock);
-	}else{
-		spin_unlock(&thread->transaction_stack->lock);
+		spin_unlock(&t->lock);
+	} else {
+		spin_unlock(&t->lock);
 		return;
 	}
 	oem_binder_hook_set.oem_wait4_hook(dst,
 				proc->tsk,
 				thread->pid,
-				thread->transaction_stack->flags & TF_ONE_WAY,
-				thread->transaction_stack->code);
+				oneway,
+				code);
 	put_task_struct(dst);
 }
 
