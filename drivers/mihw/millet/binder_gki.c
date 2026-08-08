@@ -365,25 +365,41 @@ void mi_binder_wait_for_work(void *data, bool do_proc_work,
 	if (!thread || !proc || !proc->tsk)
 		return;
 
-	t = READ_ONCE(thread->transaction_stack);
-	if (!t)
+	if (!oem_binder_hook_set.oem_wait4_hook)
 		return;
 
-	spin_lock(&t->lock);
-	if (oem_binder_hook_set.oem_wait4_hook
-			&& !thread->is_dead
-			&& READ_ONCE(thread->transaction_stack) == t
-			&& t->to_proc
-			&& t->to_proc->tsk) {
-		dst = t->to_proc->tsk;
-		oneway = t->flags & TF_ONE_WAY;
-		code = t->code;
-		get_task_struct(dst);
-		spin_unlock(&t->lock);
-	} else {
-		spin_unlock(&t->lock);
+	/*
+	 * The vendor hook is called after binder_inner_proc_unlock() in
+	 * binder_thread_read(), so transaction_stack is read without any
+	 * lock protection. Without inner_lock, another thread can pop and
+	 * kfree(t) between READ_ONCE and spin_lock(&t->lock), causing a
+	 * use-after-free on t->lock.
+	 *
+	 * Acquire proc->inner_lock to safely read transaction_stack and
+	 * extract all needed data. While inner_lock is held:
+	 *  - binder_pop_transaction_ilocked() cannot run (needs inner_lock)
+	 *  - t cannot be freed (freeing happens only after popping)
+	 *  - t->to_proc cannot be set to NULL (only in binder_thread_release
+	 *    which also needs inner_lock)
+	 *
+	 * No need for t->lock: the only writer to t->to_proc under
+	 * inner_lock is binder_thread_release, which we block by holding
+	 * inner_lock. This also avoids the lock-ordering issue between
+	 * inner_lock and t->lock.
+	 */
+	binder_inner_proc_lock(proc);
+	t = thread->transaction_stack;
+	if (!t || thread->is_dead || !t->to_proc || !t->to_proc->tsk) {
+		binder_inner_proc_unlock(proc);
 		return;
 	}
+
+	dst = t->to_proc->tsk;
+	oneway = t->flags & TF_ONE_WAY;
+	code = t->code;
+	get_task_struct(dst);
+	binder_inner_proc_unlock(proc);
+
 	oem_binder_hook_set.oem_wait4_hook(dst,
 				proc->tsk,
 				thread->pid,
