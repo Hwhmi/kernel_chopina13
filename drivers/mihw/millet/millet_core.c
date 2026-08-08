@@ -457,7 +457,7 @@ static int __init millet_init(void)
 		.input = recv_handler,
 	};
 
-	pr_err("enter millet_init func!\n");
+	pr_info("enter millet_init func!\n");
 	millet_sk.sock =
 		netlink_kernel_create(&init_net, NETLINK_MILLET, &cfg);
 	if (!millet_sk.sock) {

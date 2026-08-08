@@ -67,7 +67,7 @@ static void signas_init_millet(struct millet_sock *sk)
 
 static int __init sig_mod_init(void)
 {
-	pr_err("enter sig_mod_init func!\n");
+	pr_info("enter sig_mod_init func!\n");
 
 	register_millet_hook(SIG_TYPE, NULL,
 		signals_sendmsg, signas_init_millet);

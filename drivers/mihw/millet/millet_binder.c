@@ -238,7 +238,7 @@ static int __init init_millet_binder_drv(void)
 {
 	struct oem_binder_hook oem_set;
 
-	pr_err("enter init_millet_binder_drv func!\n");
+	pr_info("enter init_millet_binder_drv func!\n");
 	get_oem_binder_hook(&oem_set);
 	oem_register_binder_hook(&oem_set);
 	register_millet_hook(BINDER_TYPE, NULL,

@@ -284,7 +284,7 @@ static int __init millet_pkg_init(void)
 	int i;
 	struct net *net = &init_net;
 
-	pr_err("enter millet_pkg_init func!\n");
+	pr_info("enter millet_pkg_init func!\n");
 
 	for (i = 0; i < MAX_REC_UID; i++)
 		atomic_set(&uid_rec[i], 0);
@@ -294,7 +294,7 @@ static int __init millet_pkg_init(void)
 		pr_err("nf_register_hooks(millet hooks) error\n");
 		return RET_ERR;
 	}
-	pr_err("nf_register_hooks(millet hooks) success\n");
+	pr_info("nf_register_hooks(millet hooks) success\n");
 	register_millet_hook(PKG_TYPE, pkg_recv_hook, pkg_sendmsg,
 			pkg_init_millet);
 	init_millet_subsystem(PKG_TYPE);

@@ -48,7 +48,7 @@ static void hs_init_millet(struct millet_sock *sk)
 static int __init millet_hs_init(void)
 {
 
-	pr_err("enter millet_hs_init func!\n");
+	pr_info("enter millet_hs_init func!\n");
 	register_millet_hook(HANDSHK_TYPE, hs_recv_hook, hs_sendmsg,
 		hs_init_millet);
 	init_millet_subsystem(HANDSHK_TYPE);

@@ -54,7 +54,7 @@ static void freezer_cancel_attach(struct cgroup_taskset *tset)
 
 static __init int oem_cgrp_init(void)
 {
-	pr_err("enter oem_cgrp_init func!\n");
+	pr_info("enter oem_cgrp_init func!\n");
 	oem_cgroup_hook[FREERE_SUBSYS].can_attach = millet_can_attach;
 	freezer_cgrp_subsys.can_attach = freezer_can_attach;
 	freezer_cgrp_subsys.cancel_attach = freezer_cancel_attach;

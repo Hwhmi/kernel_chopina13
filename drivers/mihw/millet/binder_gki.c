@@ -16,10 +16,13 @@
 #include <linux/hrtimer.h>
 #include <linux/proc_fs.h>
 #include <linux/sched/task.h>
+#include <linux/wait.h>
 #include "millet.h"
 #include "binder_oem.h"
 #include <trace/hooks/binder.h>
 #include <../../android/binder_internal.h>
+#include <../../android/binder_alloc.h>
+#include <../../android/dbitmap.h>
 
 static struct hlist_head * get_binder_hhead = NULL;
 static struct mutex * get_binder_lock = NULL;
@@ -33,6 +36,147 @@ struct oem_binder_hook oem_binder_hook_set = {
 	.oem_wait4_hook = NULL,
 	.oem_query_st_hook = NULL,
 	.oem_buf_overflow_hook = NULL,
+};
+
+/*
+ * The binder vendor hooks pass binder internal objects, but this kernel keeps
+ * their full definitions private to drivers/android/binder.c.  Millet only
+ * reads a small set of fields from those objects, so keep matching local
+ * definitions here instead of moving Binder core internals into a public API.
+ */
+enum binder_stat_types {
+	BINDER_STAT_PROC,
+	BINDER_STAT_THREAD,
+	BINDER_STAT_NODE,
+	BINDER_STAT_REF,
+	BINDER_STAT_DEATH,
+	BINDER_STAT_TRANSACTION,
+	BINDER_STAT_TRANSACTION_COMPLETE,
+	BINDER_STAT_COUNT
+};
+
+struct binder_stats {
+	atomic_t br[_IOC_NR(BR_ONEWAY_SPAM_SUSPECT) + 1];
+	atomic_t bc[_IOC_NR(BC_REPLY_SG) + 1];
+	atomic_t obj_created[BINDER_STAT_COUNT];
+	atomic_t obj_deleted[BINDER_STAT_COUNT];
+};
+
+struct binder_work {
+	struct list_head entry;
+
+	enum binder_work_type {
+		BINDER_WORK_TRANSACTION = 1,
+		BINDER_WORK_TRANSACTION_COMPLETE,
+		BINDER_WORK_TRANSACTION_ONEWAY_SPAM_SUSPECT,
+		BINDER_WORK_RETURN_ERROR,
+		BINDER_WORK_NODE,
+		BINDER_WORK_DEAD_BINDER,
+		BINDER_WORK_DEAD_BINDER_AND_CLEAR,
+		BINDER_WORK_CLEAR_DEATH_NOTIFICATION,
+	} type;
+};
+
+struct binder_error {
+	struct binder_work work;
+	uint32_t cmd;
+};
+
+struct binder_priority {
+	unsigned int sched_policy;
+	int prio;
+};
+
+struct binder_proc {
+	struct hlist_node proc_node;
+	struct rb_root threads;
+	struct rb_root nodes;
+	struct rb_root refs_by_desc;
+	struct rb_root refs_by_node;
+	struct list_head waiting_threads;
+	int pid;
+	struct task_struct *tsk;
+	struct files_struct *files;
+	struct mutex files_lock;
+	const struct cred *cred;
+	struct hlist_node deferred_work_node;
+	int deferred_work;
+	bool is_dead;
+	struct list_head todo;
+	struct binder_stats stats;
+	struct list_head delivered_death;
+	u32 max_threads;
+	int requested_threads;
+	int requested_threads_started;
+	int tmp_ref;
+	struct binder_priority default_priority;
+	struct dentry *debugfs_entry;
+	struct binder_alloc alloc;
+	struct binder_context *context;
+	spinlock_t inner_lock;
+	spinlock_t outer_lock;
+	struct dentry *binderfs_entry;
+	bool oneway_spam_detection_enabled;
+	struct dbitmap dmap;
+};
+
+struct binder_thread {
+	struct binder_proc *proc;
+	struct rb_node rb_node;
+	struct list_head waiting_thread_node;
+	int pid;
+	int looper;
+	bool looper_need_return;
+	struct binder_transaction *transaction_stack;
+	struct list_head todo;
+	bool process_todo;
+	struct binder_error return_error;
+	struct binder_error reply_error;
+	wait_queue_head_t wait;
+	struct binder_stats stats;
+	atomic_t tmp_ref;
+	bool is_dead;
+	struct task_struct *task;
+};
+
+struct binder_transaction {
+	int debug_id;
+	struct binder_work work;
+	struct binder_thread *from;
+	struct binder_transaction *from_parent;
+	struct binder_proc *to_proc;
+	struct binder_thread *to_thread;
+	struct binder_transaction *to_parent;
+	unsigned need_reply:1;
+	struct binder_buffer *buffer;
+	unsigned int code;
+	unsigned int flags;
+	struct binder_priority priority;
+	struct binder_priority saved_priority;
+	bool set_priority_called;
+	kuid_t sender_euid;
+	binder_uintptr_t security_ctx;
+	spinlock_t lock;
+#ifdef BINDER_WATCHDOG
+	enum wait_on_reason wait_on;
+	enum wait_on_reason bark_on;
+	struct rb_node rb_node;
+	struct timespec bark_time;
+	struct timespec exe_timestamp;
+	char service[MAX_SERVICE_NAME_LEN];
+	pid_t fproc;
+	pid_t fthrd;
+	pid_t tproc;
+	pid_t tthrd;
+	unsigned int log_idx;
+#endif
+#ifdef BINDER_USER_TRACKING
+	struct timespec timestamp;
+	struct timeval tv;
+#endif
+#ifdef CONFIG_MTK_TASK_TURBO
+	struct task_struct *inherit_task;
+#endif
 };
 
 /**
@@ -169,7 +313,8 @@ struct task_struct *binder_buff_owner(struct binder_alloc *alloc)
 
 
 
-void mi_binder_alloc_new_buf_locked(void * data, size_t size, struct binder_alloc * alloc, int is_async)
+void mi_binder_alloc_new_buf_locked(void *data, size_t size,
+	struct binder_alloc *alloc, int is_async)
 {
 	if (oem_binder_hook_set.oem_buf_overflow_hook && is_async
 		&& ((alloc->free_async_space < oem_binder_hook_set.oem_wahead_thresh
@@ -184,29 +329,34 @@ void mi_binder_alloc_new_buf_locked(void * data, size_t size, struct binder_allo
 	}
 }
 
-void mi_binder_replay(void * data, struct binder_proc * target_proc, struct binder_proc * proc,
-	struct binder_thread * thread, struct binder_transaction_data * tr)
+void mi_binder_replay(void *data, struct binder_proc *target_proc,
+	struct binder_proc *proc, struct binder_thread *thread,
+	struct binder_transaction_data *tr)
 {
-	if (oem_binder_hook_set.oem_reply_hook && target_proc->tsk)
+	if (oem_binder_hook_set.oem_reply_hook && target_proc && target_proc->tsk
+			&& proc && proc->tsk && thread && tr)
 		oem_binder_hook_set.oem_reply_hook(target_proc->tsk, proc->tsk,
 				thread->pid, tr->flags & TF_ONE_WAY,
 				tr->code);
 }
 
-void mi_binder_transaction(void * data, struct binder_proc * target_proc, struct binder_proc * proc,
-	struct binder_thread * thread, struct binder_transaction_data * tr)
+void mi_binder_transaction(void *data, struct binder_proc *target_proc,
+	struct binder_proc *proc, struct binder_thread *thread,
+	struct binder_transaction_data *tr)
 {
-	if (oem_binder_hook_set.oem_trans_hook && target_proc && target_proc->tsk)
+	if (oem_binder_hook_set.oem_trans_hook && target_proc && target_proc->tsk
+			&& proc && proc->tsk && thread && tr)
 		oem_binder_hook_set.oem_trans_hook(target_proc->tsk, proc->tsk,
 				thread->pid, tr->flags & TF_ONE_WAY,
 				tr->code);
 }
 
-void mi_binder_wait_for_work(void * data, bool do_proc_work, struct binder_thread * thread, struct binder_proc * proc)
+void mi_binder_wait_for_work(void *data, bool do_proc_work,
+	struct binder_thread *thread, struct binder_proc *proc)
 {
 	struct task_struct *dst;
 
-	if(!thread->transaction_stack)
+	if (!thread || !proc || !proc->tsk || !thread->transaction_stack)
 		return;
 
 	spin_lock(&thread->transaction_stack->lock);
@@ -230,7 +380,8 @@ void mi_binder_wait_for_work(void * data, bool do_proc_work, struct binder_threa
 	put_task_struct(dst);
 }
 
-void mi_get_hhead_and_lock(void * data, struct hlist_head * hhead, struct mutex * lock)
+void mi_get_hhead_and_lock(void *data, struct hlist_head *hhead,
+	struct mutex *lock)
 {
 	if(!bgot) {
 		 if(hhead)
@@ -259,7 +410,7 @@ EXPORT_SYMBOL_GPL(oem_register_binder_hook);
 
 static int __init init_binder_gki(void)
 {
-	pr_err("enter init_binder_gki func!\n");
+	pr_info("enter init_binder_gki func!\n");
 	register_trace_android_vh_binder_alloc_new_buf_locked(mi_binder_alloc_new_buf_locked, NULL);
 	register_trace_android_vh_binder_reply(mi_binder_replay, NULL);
 	register_trace_android_vh_binder_trans(mi_binder_transaction, NULL);
