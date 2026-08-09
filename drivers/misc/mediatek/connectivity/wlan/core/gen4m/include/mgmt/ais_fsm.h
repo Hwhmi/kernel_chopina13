@@ -78,8 +78,8 @@
  *                              C O N S T A N T S
  *******************************************************************************
  */
-#define AIS_BG_SCAN_INTERVAL_MIN_SEC        2	/* 30 // exponential to 960 */
-#define AIS_BG_SCAN_INTERVAL_MAX_SEC        2	/* 960 // 16min */
+#define AIS_BG_SCAN_INTERVAL_MIN_SEC        30	/* 30 // exponential to 960 */
+#define AIS_BG_SCAN_INTERVAL_MAX_SEC        960	/* 960 // 16min */
 
 #define AIS_DELAY_TIME_OF_DISCONNECT_SEC    5	/* 10 */
 

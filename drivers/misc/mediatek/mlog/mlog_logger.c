@@ -34,6 +34,7 @@
 #include <linux/wait.h>
 #include <linux/poll.h>
 #include <linux/init.h>
+#include <linux/suspend.h>
 
 #ifdef CONFIG_MTK_GPU_SUPPORT
 #include <mt-plat/mtk_gpu_utility.h>
@@ -1126,6 +1127,26 @@ static void mlog_timer_handler(unsigned long data)
 	mod_timer(&mlog_timer, round_jiffies(jiffies + timer_intval));
 }
 
+static int mlog_pm_notifier(struct notifier_block *nb,
+			    unsigned long event, void *data)
+{
+	switch (event) {
+	case PM_SUSPEND_PREPARE:
+		del_timer_sync(&mlog_timer);
+		break;
+	case PM_POST_SUSPEND:
+		mod_timer(&mlog_timer, round_jiffies(jiffies + timer_intval));
+		break;
+	default:
+		break;
+	}
+	return NOTIFY_OK;
+}
+
+static struct notifier_block mlog_pm_nb = {
+	.notifier_call = mlog_pm_notifier,
+};
+
 static int __init mlog_init_logger(void)
 {
 	int ret = 0;
@@ -1135,15 +1156,19 @@ static int __init mlog_init_logger(void)
 	if (ret)
 		return ret;
 
-	setup_timer(&mlog_timer, mlog_timer_handler, 0);
+	setup_deferrable_timer(&mlog_timer, mlog_timer_handler, 0);
 	mlog_timer.expires = jiffies + timer_intval;
 	add_timer(&mlog_timer);
+
+	register_pm_notifier(&mlog_pm_nb);
 
 	return ret;
 }
 
 static void __exit mlog_exit_logger(void)
 {
+	unregister_pm_notifier(&mlog_pm_nb);
+	del_timer_sync(&mlog_timer);
 	kfree(strfmt_list);
 	strfmt_list = NULL;
 }

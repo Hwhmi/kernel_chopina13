@@ -7847,9 +7847,9 @@ void wlanInitFeatureOption(IN struct ADAPTER *prAdapter)
 	prWifiVar->ucAdvPws = (uint8_t) wlanCfgGetUint32(
 					prAdapter, "AdvPws", FEATURE_ENABLED);
 	prWifiVar->ucWowOnMdtim = (uint8_t) wlanCfgGetUint32(
-					prAdapter, "WowOnMdtim", 1);
+					prAdapter, "WowOnMdtim", 3);
 	prWifiVar->ucWowOffMdtim = (uint8_t) wlanCfgGetUint32(
-					prAdapter, "WowOffMdtim", 3);
+					prAdapter, "WowOffMdtim", 6);
 
 #if CFG_WOW_SUPPORT
 	prAdapter->rWowCtrl.fgWowEnable = (uint8_t) wlanCfgGetUint32(

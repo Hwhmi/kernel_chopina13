@@ -984,11 +984,33 @@ static const struct mbox_chan_ops cmdq_bdg_mbox_chan_ops = {
 
 static int cmdq_bdg_suspend(struct device *dev)
 {
+	struct cmdq *cmdq = dev_get_drvdata(dev);
+	int i;
+
+	if (!cmdq)
+		return 0;
+
+	for (i = 0; i < ARRAY_SIZE(cmdq->thread); i++)
+		del_timer_sync(&cmdq->thread[i].timeout);
+
 	return 0;
 }
 
 static int cmdq_bdg_resume(struct device *dev)
 {
+	struct cmdq *cmdq = dev_get_drvdata(dev);
+	int i;
+
+	if (!cmdq)
+		return 0;
+
+	for (i = 0; i < ARRAY_SIZE(cmdq->thread); i++) {
+		if (!list_empty(&cmdq->thread[i].task_busy_list) &&
+		    cmdq->thread[i].timeout_ms != CMDQ_NO_TIMEOUT)
+			mod_timer(&cmdq->thread[i].timeout, jiffies +
+				msecs_to_jiffies(cmdq->thread[i].timeout_ms));
+	}
+
 	return 0;
 }
 

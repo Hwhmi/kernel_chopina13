@@ -78,8 +78,8 @@
 ********************************************************************************
 */
 
-#define BOW_BG_SCAN_INTERVAL_MIN_SEC        2	/* 30 // exponential to 960 */
-#define BOW_BG_SCAN_INTERVAL_MAX_SEC        2	/* 960 // 16min */
+#define BOW_BG_SCAN_INTERVAL_MIN_SEC        30	/* 30 // exponential to 960 */
+#define BOW_BG_SCAN_INTERVAL_MAX_SEC        960	/* 960 // 16min */
 
 #define BOW_DELAY_TIME_OF_DISCONNECT_SEC    10
 

@@ -267,7 +267,7 @@ int __init sspm_logger_init_done(void)
 		if (unlikely(ret != 0))
 			return ret;
 
-		setup_timer(&sspm_log_timer, &sspm_log_timeout, 0);
+		setup_deferrable_timer(&sspm_log_timer, &sspm_log_timeout, 0);
 		sspm_log_timer.expires = 0;
 
 		sspm_logger_inited = 1;
