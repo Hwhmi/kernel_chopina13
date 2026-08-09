@@ -25,8 +25,6 @@ struct bpf_stab {
 static struct bpf_map *sock_map_alloc(union bpf_attr *attr)
 {
 	struct bpf_stab *stab;
-	u64 cost;
-	int err;
 
 	if (!capable(CAP_NET_ADMIN))
 		return ERR_PTR(-EPERM);
@@ -37,29 +35,22 @@ static struct bpf_map *sock_map_alloc(union bpf_attr *attr)
 	    attr->map_flags & ~SOCK_CREATE_FLAG_MASK)
 		return ERR_PTR(-EINVAL);
 
-	stab = kzalloc(sizeof(*stab), GFP_USER);
+	stab = kzalloc(sizeof(*stab), GFP_USER | __GFP_ACCOUNT);
 	if (!stab)
 		return ERR_PTR(-ENOMEM);
 
 	bpf_map_init_from_attr(&stab->map, attr);
 	raw_spin_lock_init(&stab->lock);
 
-	/* Make sure page count doesn't overflow. */
-	cost = (u64) stab->map.max_entries * sizeof(struct sock *);
-	err = bpf_map_charge_init(&stab->map.memory, cost);
-	if (err)
-		goto free_stab;
-
 	stab->sks = bpf_map_area_alloc((u64) stab->map.max_entries *
 				       sizeof(struct sock *),
 				       stab->map.numa_node);
-	if (stab->sks)
-		return &stab->map;
-	err = -ENOMEM;
-	bpf_map_charge_finish(&stab->map.memory);
-free_stab:
-	kfree(stab);
-	return ERR_PTR(err);
+	if (!stab->sks) {
+		kfree(stab);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	return &stab->map;
 }
 
 int sock_map_get_from_fd(const union bpf_attr *attr, struct bpf_prog *prog)
@@ -688,7 +679,7 @@ const struct bpf_map_ops sock_map_ops = {
 	.map_btf_id		= &sock_map_btf_id,
 };
 
-struct bpf_htab_elem {
+struct bpf_shtab_elem {
 	struct rcu_head rcu;
 	u32 hash;
 	struct sock *sk;
@@ -696,14 +687,14 @@ struct bpf_htab_elem {
 	u8 key[0];
 };
 
-struct bpf_htab_bucket {
+struct bpf_shtab_bucket {
 	struct hlist_head head;
 	raw_spinlock_t lock;
 };
 
-struct bpf_htab {
+struct bpf_shtab {
 	struct bpf_map map;
-	struct bpf_htab_bucket *buckets;
+	struct bpf_shtab_bucket *buckets;
 	u32 buckets_num;
 	u32 elem_size;
 	struct sk_psock_progs progs;
@@ -715,17 +706,17 @@ static inline u32 sock_hash_bucket_hash(const void *key, u32 len)
 	return jhash(key, len, 0);
 }
 
-static struct bpf_htab_bucket *sock_hash_select_bucket(struct bpf_htab *htab,
-						       u32 hash)
+static struct bpf_shtab_bucket *sock_hash_select_bucket(struct bpf_shtab *htab,
+							u32 hash)
 {
 	return &htab->buckets[hash & (htab->buckets_num - 1)];
 }
 
-static struct bpf_htab_elem *
+static struct bpf_shtab_elem *
 sock_hash_lookup_elem_raw(struct hlist_head *head, u32 hash, void *key,
 			  u32 key_size)
 {
-	struct bpf_htab_elem *elem;
+	struct bpf_shtab_elem *elem;
 
 	hlist_for_each_entry_rcu(elem, head, node) {
 		if (elem->hash == hash &&
@@ -738,10 +729,10 @@ sock_hash_lookup_elem_raw(struct hlist_head *head, u32 hash, void *key,
 
 static struct sock *__sock_hash_lookup_elem(struct bpf_map *map, void *key)
 {
-	struct bpf_htab *htab = container_of(map, struct bpf_htab, map);
+	struct bpf_shtab *htab = container_of(map, struct bpf_shtab, map);
 	u32 key_size = map->key_size, hash;
-	struct bpf_htab_bucket *bucket;
-	struct bpf_htab_elem *elem;
+	struct bpf_shtab_bucket *bucket;
+	struct bpf_shtab_elem *elem;
 
 	WARN_ON_ONCE(!rcu_read_lock_held());
 
@@ -752,8 +743,8 @@ static struct sock *__sock_hash_lookup_elem(struct bpf_map *map, void *key)
 	return elem ? elem->sk : NULL;
 }
 
-static void sock_hash_free_elem(struct bpf_htab *htab,
-				struct bpf_htab_elem *elem)
+static void sock_hash_free_elem(struct bpf_shtab *htab,
+				struct bpf_shtab_elem *elem)
 {
 	atomic_dec(&htab->count);
 	kfree_rcu(elem, rcu);
@@ -762,9 +753,9 @@ static void sock_hash_free_elem(struct bpf_htab *htab,
 static void sock_hash_delete_from_link(struct bpf_map *map, struct sock *sk,
 				       void *link_raw)
 {
-	struct bpf_htab *htab = container_of(map, struct bpf_htab, map);
-	struct bpf_htab_elem *elem_probe, *elem = link_raw;
-	struct bpf_htab_bucket *bucket;
+	struct bpf_shtab *htab = container_of(map, struct bpf_shtab, map);
+	struct bpf_shtab_elem *elem_probe, *elem = link_raw;
+	struct bpf_shtab_bucket *bucket;
 
 	WARN_ON_ONCE(!rcu_read_lock_held());
 	bucket = sock_hash_select_bucket(htab, elem->hash);
@@ -786,10 +777,10 @@ static void sock_hash_delete_from_link(struct bpf_map *map, struct sock *sk,
 
 static int sock_hash_delete_elem(struct bpf_map *map, void *key)
 {
-	struct bpf_htab *htab = container_of(map, struct bpf_htab, map);
+	struct bpf_shtab *htab = container_of(map, struct bpf_shtab, map);
 	u32 hash, key_size = map->key_size;
-	struct bpf_htab_bucket *bucket;
-	struct bpf_htab_elem *elem;
+	struct bpf_shtab_bucket *bucket;
+	struct bpf_shtab_elem *elem;
 	int ret = -ENOENT;
 
 	hash = sock_hash_bucket_hash(key, key_size);
@@ -807,12 +798,12 @@ static int sock_hash_delete_elem(struct bpf_map *map, void *key)
 	return ret;
 }
 
-static struct bpf_htab_elem *sock_hash_alloc_elem(struct bpf_htab *htab,
-						  void *key, u32 key_size,
-						  u32 hash, struct sock *sk,
-						  struct bpf_htab_elem *old)
+static struct bpf_shtab_elem *sock_hash_alloc_elem(struct bpf_shtab *htab,
+						   void *key, u32 key_size,
+						   u32 hash, struct sock *sk,
+						   struct bpf_shtab_elem *old)
 {
-	struct bpf_htab_elem *new;
+	struct bpf_shtab_elem *new;
 
 	if (atomic_inc_return(&htab->count) > htab->map.max_entries) {
 		if (!old) {
@@ -821,8 +812,9 @@ static struct bpf_htab_elem *sock_hash_alloc_elem(struct bpf_htab *htab,
 		}
 	}
 
-	new = kmalloc_node(htab->elem_size, GFP_ATOMIC | __GFP_NOWARN,
-			   htab->map.numa_node);
+	new = bpf_map_kmalloc_node(&htab->map, htab->elem_size,
+				   GFP_ATOMIC | __GFP_NOWARN,
+				   htab->map.numa_node);
 	if (!new) {
 		atomic_dec(&htab->count);
 		return ERR_PTR(-ENOMEM);
@@ -836,10 +828,10 @@ static struct bpf_htab_elem *sock_hash_alloc_elem(struct bpf_htab *htab,
 static int sock_hash_update_common(struct bpf_map *map, void *key,
 				   struct sock *sk, u64 flags)
 {
-	struct bpf_htab *htab = container_of(map, struct bpf_htab, map);
+	struct bpf_shtab *htab = container_of(map, struct bpf_shtab, map);
 	u32 key_size = map->key_size, hash;
-	struct bpf_htab_elem *elem, *elem_new;
-	struct bpf_htab_bucket *bucket;
+	struct bpf_shtab_elem *elem, *elem_new;
+	struct bpf_shtab_bucket *bucket;
 	struct sk_psock_link *link;
 	struct sk_psock *psock;
 	int ret;
@@ -908,8 +900,8 @@ out_free:
 static int sock_hash_get_next_key(struct bpf_map *map, void *key,
 				  void *key_next)
 {
-	struct bpf_htab *htab = container_of(map, struct bpf_htab, map);
-	struct bpf_htab_elem *elem, *elem_next;
+	struct bpf_shtab *htab = container_of(map, struct bpf_shtab, map);
+	struct bpf_shtab_elem *elem, *elem_next;
 	u32 hash, key_size = map->key_size;
 	struct hlist_head *head;
 	int i = 0;
@@ -923,7 +915,7 @@ static int sock_hash_get_next_key(struct bpf_map *map, void *key,
 		goto find_first_elem;
 
 	elem_next = hlist_entry_safe(rcu_dereference_raw(hlist_next_rcu(&elem->node)),
-				     struct bpf_htab_elem, node);
+				     struct bpf_shtab_elem, node);
 	if (elem_next) {
 		memcpy(key_next, elem_next->key, key_size);
 		return 0;
@@ -935,7 +927,7 @@ find_first_elem:
 	for (; i < htab->buckets_num; i++) {
 		head = &sock_hash_select_bucket(htab, i)->head;
 		elem_next = hlist_entry_safe(rcu_dereference_raw(hlist_first_rcu(head)),
-					     struct bpf_htab_elem, node);
+					     struct bpf_shtab_elem, node);
 		if (elem_next) {
 			memcpy(key_next, elem_next->key, key_size);
 			return 0;
@@ -947,9 +939,8 @@ find_first_elem:
 
 static struct bpf_map *sock_hash_alloc(union bpf_attr *attr)
 {
-	struct bpf_htab *htab;
+	struct bpf_shtab *htab;
 	int i, err;
-	u64 cost;
 
 	if (!capable(CAP_NET_ADMIN))
 		return ERR_PTR(-EPERM);
@@ -962,30 +953,23 @@ static struct bpf_map *sock_hash_alloc(union bpf_attr *attr)
 	if (attr->key_size > MAX_BPF_STACK)
 		return ERR_PTR(-E2BIG);
 
-	htab = kzalloc(sizeof(*htab), GFP_USER);
+	htab = kzalloc(sizeof(*htab), GFP_USER | __GFP_ACCOUNT);
 	if (!htab)
 		return ERR_PTR(-ENOMEM);
 
 	bpf_map_init_from_attr(&htab->map, attr);
 
 	htab->buckets_num = roundup_pow_of_two(htab->map.max_entries);
-	htab->elem_size = sizeof(struct bpf_htab_elem) +
+	htab->elem_size = sizeof(struct bpf_shtab_elem) +
 			  round_up(htab->map.key_size, 8);
 	if (htab->buckets_num == 0 ||
-	    htab->buckets_num > U32_MAX / sizeof(struct bpf_htab_bucket)) {
-		err = -EINVAL;
-		goto free_htab;
-	}
-
-	cost = (u64) htab->buckets_num * sizeof(struct bpf_htab_bucket) +
-	       (u64) htab->elem_size * htab->map.max_entries;
-	if (cost >= U32_MAX - PAGE_SIZE) {
+	    htab->buckets_num > U32_MAX / sizeof(struct bpf_shtab_bucket)) {
 		err = -EINVAL;
 		goto free_htab;
 	}
 
 	htab->buckets = bpf_map_area_alloc(htab->buckets_num *
-					   sizeof(struct bpf_htab_bucket),
+					   sizeof(struct bpf_shtab_bucket),
 					   htab->map.numa_node);
 	if (!htab->buckets) {
 		err = -ENOMEM;
@@ -1005,9 +989,9 @@ free_htab:
 
 static void sock_hash_free(struct bpf_map *map)
 {
-	struct bpf_htab *htab = container_of(map, struct bpf_htab, map);
-	struct bpf_htab_bucket *bucket;
-	struct bpf_htab_elem *elem;
+	struct bpf_shtab *htab = container_of(map, struct bpf_shtab, map);
+	struct bpf_shtab_bucket *bucket;
+	struct bpf_shtab_elem *elem;
 	struct hlist_node *node;
 	int i;
 
@@ -1057,7 +1041,7 @@ static void *sock_hash_lookup(struct bpf_map *map, void *key)
 
 static void sock_hash_release_progs(struct bpf_map *map)
 {
-	psock_progs_drop(&container_of(map, struct bpf_htab, map)->progs);
+	psock_progs_drop(&container_of(map, struct bpf_shtab, map)->progs);
 }
 
 BPF_CALL_4(bpf_sock_hash_update, struct bpf_sock_ops_kern *, sops,
@@ -1159,7 +1143,7 @@ static struct sk_psock_progs *sock_map_progs(struct bpf_map *map)
 	case BPF_MAP_TYPE_SOCKMAP:
 		return &container_of(map, struct bpf_stab, map)->progs;
 	case BPF_MAP_TYPE_SOCKHASH:
-		return &container_of(map, struct bpf_htab, map)->progs;
+		return &container_of(map, struct bpf_shtab, map)->progs;
 	default:
 		break;
 	}
