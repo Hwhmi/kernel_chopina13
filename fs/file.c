@@ -935,6 +935,20 @@ struct file *task_lookup_next_fd_rcu(struct task_struct *task, unsigned int *ret
 	return file;
 }
 
+struct file *fget_task(struct task_struct *task, unsigned int fd)
+{
+	struct file *file = NULL;
+
+	task_lock(task);
+	if (task->files)
+		file = files_lookup_fd_locked(task->files, fd);
+	if (file)
+		get_file(file);
+	task_unlock(task);
+
+	return file;
+}
+
 /*
  * Lightweight file lookup - no refcnt increment if fd table isn't shared.
  *
