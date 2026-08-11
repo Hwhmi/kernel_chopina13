@@ -247,6 +247,7 @@ enum bpf_attach_type {
 	BPF_XDP_CPUMAP,
 	BPF_SK_LOOKUP,
 	BPF_XDP,
+	BPF_PERF_EVENT,
 	__MAX_BPF_ATTACH_TYPE
 };
 
@@ -260,6 +261,7 @@ enum bpf_link_type {
 	BPF_LINK_TYPE_ITER = 4,
 	BPF_LINK_TYPE_NETNS = 5,
 	BPF_LINK_TYPE_XDP = 6,
+	BPF_LINK_TYPE_PERF_EVENT = 7,
 
 	MAX_BPF_LINK_TYPE,
 };
@@ -3842,6 +3844,33 @@ union bpf_attr {
  *	Return
  *		A pointer to a struct socket on success or NULL if the file is
  *		not a socket.
+ *
+ * u64 bpf_get_func_ip(void *ctx)
+ *	Description
+ *		Get address of the traced function (for tracing and kprobe programs).
+ *	Return
+ *		Address of the traced function.
+ *
+ * u64 bpf_get_attach_cookie(void *ctx)
+ *	Description
+ *		Get bpf_cookie value provided (optionally) during the program
+ *		attachment. It might be different for each individual
+ *		attachment, even if BPF program itself is the same.
+ *		Expects BPF program context *ctx* as a first argument.
+ *
+ *		Supported for the following program types:
+ *			- kprobe/uprobe;
+ *			- tracepoint;
+ *			- perf_event.
+ *	Return
+ *		Value specified by user at BPF link creation/attachment time
+ *		or 0, if it was not specified.
+ *
+ * long bpf_task_pt_regs(struct task_struct *task)
+ *	Description
+ *		Get the struct pt_regs associated with **task**.
+ *	Return
+ *		A pointer to struct pt_regs.
  */
 #define __BPF_FUNC_MAPPER(FN)		\
 	FN(unspec),			\
@@ -4007,6 +4036,9 @@ union bpf_attr {
 	FN(ktime_get_coarse_ns),	\
 	FN(ima_inode_hash),		\
 	FN(sock_from_file),		\
+	FN(get_func_ip),		\
+	FN(get_attach_cookie),		\
+	FN(task_pt_regs),		\
 	/* */
 
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
@@ -4569,6 +4601,10 @@ struct bpf_link_info {
 		struct {
 			__u32 ifindex;
 		} xdp;
+		struct {
+			__aligned_u64 tp_name; /* in/out: tp_name buffer ptr */
+			__u32 tp_name_len;     /* in/out: tp_name buffer len */
+		} perf_event;
 	};
 } __attribute__((aligned(8)));
 

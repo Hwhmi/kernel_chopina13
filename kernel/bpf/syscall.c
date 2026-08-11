@@ -2979,6 +2979,8 @@ attach_type_to_prog_type(enum bpf_attach_type attach_type)
 		return BPF_PROG_TYPE_SK_LOOKUP;
 	case BPF_XDP:
 		return BPF_PROG_TYPE_XDP;
+	case BPF_PERF_EVENT:
+		return BPF_PROG_TYPE_PERF_EVENT;
 	default:
 		return BPF_PROG_TYPE_UNSPEC;
 	}
