@@ -3077,7 +3077,7 @@ static int bpf_prog_detach(const union bpf_attr *attr)
 	}
 }
 
-#define BPF_PROG_QUERY_LAST_FIELD query.prog_cnt
+#define BPF_PROG_QUERY_LAST_FIELD query.prog_attach_flags
 
 static int bpf_prog_query(const union bpf_attr *attr,
 			  union bpf_attr __user *uattr)
@@ -3467,6 +3467,7 @@ static int bpf_prog_get_info_by_fd(struct file *file,
 	bpf_prog_get_stats(prog, &stats);
 	info.run_time_ns = stats.nsecs;
 	info.run_cnt = stats.cnt;
+	info.recursion_misses = 0;
 
 	if (!bpf_capable()) {
 		info.jited_prog_len = 0;

@@ -764,18 +764,25 @@ int __cgroup_bpf_detach(struct cgroup *cgrp, struct bpf_prog *prog,
 int __cgroup_bpf_query(struct cgroup *cgrp, const union bpf_attr *attr,
 		       union bpf_attr __user *uattr)
 {
+	__u32 __user *prog_attach_flags =
+		u64_to_user_ptr(attr->query.prog_attach_flags);
+	bool effective_query =
+		attr->query.query_flags & BPF_F_QUERY_EFFECTIVE;
 	__u32 __user *prog_ids = u64_to_user_ptr(attr->query.prog_ids);
 	enum bpf_attach_type type = attr->query.attach_type;
 	struct list_head *progs = &cgrp->bpf.progs[type];
-	u32 flags = cgrp->bpf.flags[type];
+	u32 flags = effective_query ? 0 : cgrp->bpf.flags[type];
 	struct bpf_prog_array *effective;
 	struct bpf_prog *prog;
 	int cnt, ret = 0, i;
 
+	if (effective_query && prog_attach_flags)
+		return -EINVAL;
+
 	effective = rcu_dereference_protected(cgrp->bpf.effective[type],
 					      lockdep_is_held(&cgroup_mutex));
 
-	if (attr->query.query_flags & BPF_F_QUERY_EFFECTIVE)
+	if (effective_query)
 		cnt = bpf_prog_array_length(effective);
 	else
 		cnt = prog_list_length(progs);
@@ -792,7 +799,7 @@ int __cgroup_bpf_query(struct cgroup *cgrp, const union bpf_attr *attr,
 		ret = -ENOSPC;
 	}
 
-	if (attr->query.query_flags & BPF_F_QUERY_EFFECTIVE) {
+	if (effective_query) {
 		return bpf_prog_array_copy_to_user(effective, prog_ids, cnt);
 	} else {
 		struct bpf_prog_list *pl;
@@ -806,6 +813,13 @@ int __cgroup_bpf_query(struct cgroup *cgrp, const union bpf_attr *attr,
 				return -EFAULT;
 			if (++i == cnt)
 				break;
+		}
+
+		if (prog_attach_flags) {
+			for (i = 0; i < cnt; i++)
+				if (copy_to_user(prog_attach_flags + i, &flags,
+						 sizeof(flags)))
+					return -EFAULT;
 		}
 	}
 	return ret;

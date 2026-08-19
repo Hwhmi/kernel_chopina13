@@ -633,6 +633,9 @@ union bpf_attr {
 		__u32		attach_flags;
 		__aligned_u64	prog_ids;
 		__u32		prog_cnt;
+		__u32		:32;
+		/* output: per-program attach flags; invalid for effective query */
+		__aligned_u64	prog_attach_flags;
 	} query;
 
 	struct { /* anonymous struct used by BPF_RAW_TRACEPOINT_OPEN command */
@@ -4435,6 +4438,7 @@ struct bpf_prog_info {
 	__aligned_u64 prog_tags;
 	__u64 run_time_ns;
 	__u64 run_cnt;
+	__u64 recursion_misses;
 } __attribute__((aligned(8)));
 
 struct bpf_map_info {
